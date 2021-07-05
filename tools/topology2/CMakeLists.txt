@@ -17,6 +17,7 @@ set(TPLGS
 	"sof-tgl-max98373-rt5682\;sof-tgl-max98373-rt5682\;"
 	"sof-tgl-sdw-max98373-rt5682-2ch\;sof-tgl-sdw-max98373-rt5682-2ch\;"
 	"sof-tgl-sdw-max98373-rt5682-4ch\;sof-tgl-sdw-max98373-rt5682-4ch\;"
+	"cavs-dmic\;cavs-dmic\;"
 )
 
 add_custom_target(topology2 ALL)
