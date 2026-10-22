@@ -43,9 +43,9 @@ def get_dsp_power_state():
 
 
 def monitor_active_slot(stop_evt, observed_slots, card=0):
-    """Poll wov_active_slot every 50ms while capture is active."""
+    """Poll the DMIC WoV active-slot control every 50ms while capture is active."""
     while not stop_evt.is_set():
-        v = get_kcontrol("wov_active_slot", card=card)
+        v = get_kcontrol("DMIC Phrase Slot", card=card)
         if v is not None and (not observed_slots or observed_slots[-1] != v):
             observed_slots.append(v)
         time.sleep(0.05)
@@ -56,17 +56,19 @@ def test_s0_slot(slot, ctl, mode="alsa_no_irq", card=0, device=12):
     print(f"[S0 Test] Slot {slot} ({ctl}) - Mode: {mode}")
     print(f"==================================================")
 
-    init_slot = get_kcontrol("wov_active_slot", card=card)
-    print(f"  1. Initial wov_active_slot : {init_slot} (Expected: 0)")
+    init_slot = get_kcontrol("DMIC Phrase Slot", card=card)
+    print(f"  1. Initial DMIC Phrase Slot : {init_slot} (Expected: 0)")
 
+    dev_str = f"hw:{card},{device}"
     if mode == "alsa_no_irq":
         app = "/usr/local/bin/wov_blocking_read"
+        app_args = [app, dev_str, ctl, "0", "none", "4000", "DMIC Phrase Slot"]
     elif mode == "tinyalsa_mmap_noirq":
         app = "/usr/local/bin/wov_blocking_read_tinyalsa"
+        app_args = [app, dev_str, ctl]
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
-    dev_str = f"hw:{card},{device}"
     print(f"  2. Starting {os.path.basename(app)} on {dev_str} with trigger {ctl}...")
     t0 = time.monotonic()
 
@@ -75,7 +77,7 @@ def test_s0_slot(slot, ctl, mode="alsa_no_irq", card=0, device=12):
     mon_thread = threading.Thread(target=monitor_active_slot, args=(stop_evt, observed_slots, card))
     mon_thread.start()
 
-    p = subprocess.Popen([app, dev_str, ctl], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    p = subprocess.Popen(app_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     try:
         stdout, stderr = p.communicate(timeout=15)
@@ -93,7 +95,7 @@ def test_s0_slot(slot, ctl, mode="alsa_no_irq", card=0, device=12):
 
     post_slot = None
     for _ in range(15):
-        post_slot = get_kcontrol("wov_active_slot", card=card)
+        post_slot = get_kcontrol("DMIC Phrase Slot", card=card)
         if post_slot == "0":
             break
         time.sleep(0.1)
@@ -116,8 +118,8 @@ def test_d0i3_slot(slot, ctl, card=0, device=12):
     out_wav = f"/tmp/wov_d0i3_slot{slot}.wav"
     subprocess.run(["rm", "-f", out_wav])
 
-    init_slot = get_kcontrol("wov_active_slot", card=card)
-    print(f"  1. Initial wov_active_slot : {init_slot} (Expected: 0)")
+    init_slot = get_kcontrol("DMIC Phrase Slot", card=card)
+    print(f"  1. Initial DMIC Phrase Slot : {init_slot} (Expected: 0)")
 
     app = "/usr/local/bin/wov_blocking_read"
     dev_str = f"hw:{card},{device}"
@@ -155,7 +157,7 @@ def test_d0i3_slot(slot, ctl, card=0, device=12):
     file_sz = os.path.getsize(out_wav) if os.path.exists(out_wav) else 0
     post_slot = None
     for _ in range(15):
-        post_slot = get_kcontrol("wov_active_slot", card=card)
+        post_slot = get_kcontrol("DMIC Phrase Slot", card=card)
         if post_slot == "0":
             break
         time.sleep(0.1)

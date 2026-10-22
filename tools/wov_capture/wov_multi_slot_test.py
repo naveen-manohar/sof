@@ -3,7 +3,7 @@
 """
 Multi-Slot WOV Automated Trigger & State Verification Test Suite
 Tests 3 WOV detector slots (101 -> Slot 1, 102 -> Slot 2, 103 -> Slot 3),
-momentary switch auto-reset, and active_slot enum transition to Listening (0).
+momentary switch auto-reset, and active_slot enum transition to Auto (0).
 """
 
 import argparse
@@ -40,13 +40,13 @@ def set_kcontrol(name, val, card=0):
 def run_cycle(cycle_num, target_slot, card=0, device=11, channels=4, rate=16000, duration=3):
     """
     Run a single test cycle:
-      1. Verify wov_active_slot is '0' (Listening) before start.
+      1. Verify DMIC Phrase Slot is '0' (Auto) before start.
       2. Start arecord on hw:{card},{device}.
       3. Trigger wov_test_{100 + target_slot}.
-      4. Verify wov_active_slot transitions to target_slot.
+      4. Verify DMIC Phrase Slot transitions to target_slot.
       5. Verify test switch auto-resets to 'off'.
       6. Wait for arecord to complete.
-      7. Verify wov_active_slot returns to '0' (Listening).
+      7. Verify DMIC Phrase Slot returns to '0' (Auto).
     """
     slot_names = {1: "Slot 1 (wov_test_101)", 2: "Slot 2 (wov_test_102)", 3: "Slot 3 (wov_test_103)"}
     sw_name = f"wov_test_{100 + target_slot}"
@@ -55,9 +55,9 @@ def run_cycle(cycle_num, target_slot, card=0, device=11, channels=4, rate=16000,
     print(f"\n[Cycle {cycle_num:02d}] Testing {slot_names[target_slot]}...")
 
     # Step 1: Initial state
-    initial_slot = get_kcontrol("wov_active_slot", card=card)
+    initial_slot = get_kcontrol("DMIC Phrase Slot", card=card)
     if initial_slot != "0":
-        print(f"  [WARN] Initial slot was '{initial_slot}', expected '0' (Listening)")
+        print(f"  [WARN] Initial slot was '{initial_slot}', expected '0' (Auto)")
 
     # Step 2: Start capture
     arecord_cmd = [
@@ -73,7 +73,7 @@ def run_cycle(cycle_num, target_slot, card=0, device=11, channels=4, rate=16000,
     time.sleep(0.2)
 
     # Step 4: Verify active slot
-    active_slot = get_kcontrol("wov_active_slot", card=card)
+    active_slot = get_kcontrol("DMIC Phrase Slot", card=card)
     print(f"  Active Slot during trigger : {active_slot} (Expected: {target_slot})")
 
     # Step 5: Verify switch reset
@@ -86,7 +86,7 @@ def run_cycle(cycle_num, target_slot, card=0, device=11, channels=4, rate=16000,
     file_sz = os.path.getsize(out_wav) if os.path.exists(out_wav) else 0
 
     # Step 7: Verify post-stop slot reset
-    post_slot = get_kcontrol("wov_active_slot", card=card)
+    post_slot = get_kcontrol("DMIC Phrase Slot", card=card)
     print(f"  Active Slot after stop     : {post_slot} (Expected: 0)")
     print(f"  Captured WAV File          : {out_wav} ({file_sz} bytes, {t_elapsed:.2f}s)")
 

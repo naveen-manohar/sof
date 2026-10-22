@@ -30,7 +30,7 @@ static double now_s(void)
 	return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-static int get_active_slot(int card)
+static int get_active_slot(int card, const char *control_name)
 {
 	snd_ctl_t *ctl_handle;
 	char ctl_name[32];
@@ -41,7 +41,7 @@ static int get_active_slot(int card)
 	snd_ctl_elem_id_t *id;
 	snd_ctl_elem_id_alloca(&id);
 	snd_ctl_elem_id_set_interface(id, SND_CTL_ELEM_IFACE_MIXER);
-	snd_ctl_elem_id_set_name(id, "wov_active_slot");
+	snd_ctl_elem_id_set_name(id, control_name);
 
 	snd_ctl_elem_value_t *val;
 	snd_ctl_elem_value_alloca(&val);
@@ -67,6 +67,7 @@ int main(int argc, char **argv)
 	unsigned int delay_sec = argc > 3 ? atoi(argv[3]) : 0;
 	const char *out_wav = (argc > 4 && strlen(argv[4]) > 0 && strcmp(argv[4], "none") != 0) ? argv[4] : NULL;
 	unsigned int total_frames = argc > 5 ? atoi(argv[5]) : 4000;
+	const char *active_slot_control = argc > 6 ? argv[6] : "wov_active_slot";
 	unsigned int rate = 16000;
 	snd_pcm_t *pcm;
 	snd_pcm_hw_params_t *hw;
@@ -217,7 +218,7 @@ int main(int argc, char **argv)
 	}
 
 	for (int retry = 0; retry < 25; retry++) {
-		int s = get_active_slot(card);
+		int s = get_active_slot(card, active_slot_control);
 		if (s > 0) {
 			triggered_slot = s;
 			break;

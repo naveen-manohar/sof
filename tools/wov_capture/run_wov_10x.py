@@ -60,9 +60,9 @@ def set_kcontrol(name, val, card=0):
 def reset_all_controls(card=0, slots=None):
     if slots is None:
         slots = find_wov_slots(card)
-    val = get_kcontrol("wov_active_slot", card=card)
+    val = get_kcontrol("DMIC Phrase Slot", card=card)
     if val is not None and val != "0":
-        set_kcontrol("wov_active_slot", 0, card=card)
+        set_kcontrol("DMIC Phrase Slot", 0, card=card)
     for _, ctl in slots:
         val = get_kcontrol(ctl, card=card)
         if val is not None and val not in ("0", "off"):
@@ -124,7 +124,7 @@ def run_s0_iteration(iteration, slot, ctl, card=0, device=None):
     app = "/usr/local/bin/wov_blocking_read"
     dev_str = f"hw:{card},{device}"
     # Wait 1s idle in stream so KPB history buffer is primed (~16000 frames) before trigger
-    cmd = [app, dev_str, ctl, "1", out_wav, "8000"]
+    cmd = [app, dev_str, ctl, "1", out_wav, "8000", "DMIC Phrase Slot"]
     
     t0 = time.monotonic()
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -143,7 +143,7 @@ def run_s0_iteration(iteration, slot, ctl, card=0, device=None):
     # Wait up to 1.5s for async control updates to settle
     post_slot = None
     for _ in range(15):
-        post_slot = get_kcontrol("wov_active_slot", card=card)
+        post_slot = get_kcontrol("DMIC Phrase Slot", card=card)
         if post_slot == "0":
             break
         time.sleep(0.1)
@@ -207,7 +207,7 @@ def run_d0i3_iteration(iteration, slot, ctl, card=0, device=None):
     # Wait up to 1.5s for async control updates to settle
     post_slot = None
     for _ in range(15):
-        post_slot = get_kcontrol("wov_active_slot", card=card)
+        post_slot = get_kcontrol("DMIC Phrase Slot", card=card)
         if post_slot == "0":
             break
         time.sleep(0.1)

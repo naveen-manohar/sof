@@ -172,7 +172,7 @@ static void arb_on_detect(void *arg, enum notify_id id, void *data)
 	cd->active_slot = det->slot_id;
 
 #if CONFIG_IPC_MAJOR_4
-	/* Notify host ALSA enum control: 1..N corresponds to Slot 1..N (0 is Listening) */
+	/* Notify host ALSA enum control: 1..N is the triggered slot (0 is Auto). */
 	notify_control_change(dev, cd->active_slot_ctl_id, (uint32_t)cd->active_slot + 1);
 	/* Wake a blocking read() on the host WOV capture PCM - see notify_host_detect(). */
 	notify_host_detect(dev, det->slot_id);
@@ -445,7 +445,7 @@ static int wov_arb_set_large_config(struct comp_dev *dev,
 			uint32_t val = cp->chanv[0].value;
 
 			if (val == 0) {
-				comp_info(dev, "wov_arb: reset active_slot to listening (0)");
+				comp_info(dev, "wov_arb: reset active_slot to auto (0)");
 				cd->active_slot = WOV_ARB_NO_ACTIVE;
 				struct wov_ctrl_notif c = { .cmd = WOV_ARB_CMD_RESUME };
 				notifier_event(dev, NOTIFIER_ID_WOV_CTRL,
@@ -662,8 +662,8 @@ static int wov_arb_copy(struct comp_dev *dev)
 }
 
 /* -------------------------------------------------------------------------
- * IPC4 large-config (get): expose active slot to userspace as a volatile
- * RO enum kcontrol; the host reads this via GET_MODULE_LARGE_CONFIG.
+ * IPC4 large-config (get): expose the selection / active slot to userspace
+ * through the enum kcontrol; the host reads this via GET_MODULE_LARGE_CONFIG.
  * ---------------------------------------------------------------------- */
 
 static int wov_arb_get_large_config(struct comp_dev *dev,
@@ -695,7 +695,7 @@ static int wov_arb_get_large_config(struct comp_dev *dev,
 		cp->id = ctl_id;
 		cp->num_elems = 1;
 		cp->chanv[0].channel = 0;
-		/* 0 for Listening, 1..N for triggered slots */
+		/* 0 for Auto, 1..N for triggered slots */
 		if (cd->active_slot == WOV_ARB_NO_ACTIVE)
 			cp->chanv[0].value = 0;
 		else

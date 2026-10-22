@@ -171,12 +171,14 @@ The MWW detector participates in SOF's synchronous intra-DSP publish/subscribe n
 
 ## ALSA Kcontrols & Userspace Verification
 
-### 1. Active Slot Status (`wov_active_slot`)
-The arbiter exposes a volatile read-only ALSA enum kcontrol:
+### 1. Phrase Slot Mode and Status (`DMIC Phrase Slot`)
+On WCL, the arbiter exposes a volatile read/write ALSA enum kcontrol:
 ```bash
-amixer -c 0 cget name='wov_active_slot'
-# Values: 0 = Listening, 1 = Slot 1 ("strawberry"), 2 = Slot 2 ("hi intel"), 3 = Slot 3 ("orange")
+amixer -c 0 cget name='DMIC Phrase Slot'
+# Values: 0 = Auto, 1 = detector slot 1, 2 = detector slot 2, 3 = detector slot 3
 ```
+`Auto` allows all detector slots to scan; selecting `1`, `2`, or `3` pauses the
+other slots. After a trigger, the control reports the winning detector slot.
 
 ### 2. Audio Capture Endpoints
 - **Stereo ECNS Stream** (PCM 10): `arecord -D hw:0,10 -f S16_LE -r 16000 -c 2 -d 5 /tmp/ecns.wav`
@@ -186,4 +188,3 @@ amixer -c 0 cget name='wov_active_slot'
 
 ## Further Reading
 - [Developer Integration Guide: Custom WOV & ECNS Algorithms](../../../doc/developer_guides/wov_ecns_integration_guide.md)
-

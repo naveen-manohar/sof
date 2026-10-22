@@ -42,7 +42,7 @@ In this architecture, two dedicated physical PDM digital microphone interfaces f
 - **PDM0 (`dmic01`)**: Dedicated 48 kHz stereo stream via Pipeline 110 feeding ECNS Input Pin 1.
 
 The ECNS module processes both streams and outputs:
-- **Pin 0 (mono clean speech)**: Extracts the Left channel from Pin 0 in to produce a 16 kHz mono clean stream. Routes to KPB (Pipeline 116, 2.0s history depth = 64 KB mono buffer), then fans out via `mixin.116.1` to 3 concurrent **microWakeWord (MWW)** keyword spotting slots (running MFCC feature extraction + TFLM streaming graph in lock-step). Upon keyword detection, the detector notifies KPB (`NOTIFIER_ID_KPB_CLIENT_EVT`) to drain and the WOV Arbiter (`NOTIFIER_ID_WOV_DETECT`) to set `wov_active_slot` and pause sibling slots. The WOV Arbiter routes the active slot audio (pre-roll + live) to ALSA PCM 12 (`hw:0,12`, `DMIC Multi-WOV`, `capture_compatible_d0i3: true`).
+- **Pin 0 (mono clean speech)**: Extracts the Left channel from Pin 0 in to produce a 16 kHz mono clean stream. Routes to KPB (Pipeline 116, 2.0s history depth = 64 KB mono buffer), then fans out via `mixin.116.1` to 3 concurrent **microWakeWord (MWW)** keyword spotting slots (running MFCC feature extraction + TFLM streaming graph in lock-step). Upon keyword detection, the detector notifies KPB (`NOTIFIER_ID_KPB_CLIENT_EVT`) to drain and the WOV Arbiter (`NOTIFIER_ID_WOV_DETECT`) to update the `DMIC Phrase Slot` control and pause sibling slots. The WOV Arbiter routes the active slot audio (pre-roll + live) to ALSA PCM 12 (`hw:0,12`, `DMIC Multi-WOV`, `capture_compatible_d0i3: true`).
 - **Pin 1 (stereo clean speech)**: Performs a 1-to-1 copy of Pin 1 in to produce a 48 kHz stereo clean stream routed to Host Copier 11 (ALSA PCM 11, `hw:0,11`, `DMIC ECNS Capture`, `capture_compatible_d0i3: true`).
 
 ```mermaid
@@ -160,7 +160,7 @@ The dual-rate DMIC architecture is deployed across **Panther Lake (PTL)**, **Tig
 | Sample Format | S16_LE / S32_LE | S16_LE / S32_LE |
 | History / Pre-roll | Live streaming | 2.0 s (64 KB mono buffer in KPB) |
 | Keyword Spotters | N/A | 3 concurrent slots: 0="strawberry", 1="hi intel", 2="orange" |
-| Keyword Control | N/A | `wov_active_slot` enum (0=Listening, 1=Slot 0, 2=Slot 1, 3=Slot 2) |
+| Keyword Control | N/A | `DMIC Phrase Slot` enum (0=Auto, 1=detector 1, 2=detector 2, 3=detector 3) |
 | Scheduling | Core 0 (LL 1ms) | Core 0 (LL 1ms arbiter + DP 20ms KPB + DP 10ms MWW) |
 | Processing Source | ECNS Pin 1 (1-to-1 copy of 48k `dmic01`) | ECNS Pin 0 (mono Left ch of 16k `dmic16k`) via KPB & WOV Arbiter |
 | D0i3 Low Power | **Yes** (`capture_compatible_d0i3: true`) | **Yes** (`capture_compatible_d0i3: true`) |
@@ -344,7 +344,7 @@ Host                        Kernel / ASoC               Firmware
 open pcmC0D11c          ──► SET_PIPELINE_STATE(RUNNING) ──► KPBs: KPB_STATE_BUFFERING (filling history)
                                                               detect_tests: dp_thread running, listening
 
-─────────────────────── Listening / Capture ───────────────────────────
+─────────────────────── Auto Detection / Capture ──────────────────────
 arecord / wov_capture_app captures frames at 16 kHz 2-channel from hw:0,11
 ```
 
@@ -352,8 +352,8 @@ arecord / wov_capture_app captures frames at 16 kHz 2-channel from hw:0,11
 
 | State | Transition | Trigger | PCM Capture device |
 |---|---|---|---|
-| Listening → Active | WOV_DETECT | detect_test fires | Stays OPEN |
-| Active → Listening | STOP/PAUSE | host or driver closes/re-arms | Stays OPEN (re-armed) |
+| Auto → Active | WOV_DETECT | detect_test fires | Stays OPEN |
+| Active → Auto | STOP/PAUSE | host or driver closes/re-arms | Stays OPEN (re-armed) |
 | Any → closed | close() | host exits | Closed |
 
 ---
@@ -386,7 +386,7 @@ sequenceDiagram
     participant HOST  as Host PCM (hw:0,11)
     participant OTHER as detect_test (slots ≠ N)
 
-    Note over DMIC,OTHER: Listening state — all slots accumulating pre-roll
+    Note over DMIC,OTHER: Auto detection — all slots accumulating pre-roll
 
     loop Every 1 ms (LL period)
         DMIC->>KPB: DAI DMA frames
@@ -438,27 +438,31 @@ based on its pipeline ID:
 
 No user-space initialization kcontrols are required.
 
-#### `wov_arbiter` — active slot status via `wov_active_slot` enum kcontrol
+#### `wov_arbiter` — slot selection and status via the `DMIC Phrase Slot` enum kcontrol
 
-The `wov_arbiter` instance exposes a volatile read-only ALSA enum kcontrol named `wov_active_slot`
-that reports the current arbitration and keyword detection state:
+The WCL topology uses this name and enum labels; other topology variants retain
+their existing `wov_active_slot` control and labels.
+
+The DMIC `wov_arbiter` instance exposes a volatile read/write ALSA enum kcontrol named
+`DMIC Phrase Slot`. `Auto` resumes all detectors; selecting `1`, `2`, or `3` pauses
+the other detectors. After a keyword trigger, the control reports the winning slot.
 
 | Enum Index | Item Name | Meaning |
 |---|---|---|
-| `0` | `Listening` | No keyword detected / idle / listening |
-| `1` | `Slot 1` | Slot 0 (Pipeline 101 / `wov.101.1`) triggered and active |
-| `2` | `Slot 2` | Slot 1 (Pipeline 102 / `wov.102.1`) triggered and active |
-| `3` | `Slot 3` | Slot 2 (Pipeline 103 / `wov.103.1`) triggered and active |
+| `0` | `Auto` | All detector slots scan automatically |
+| `1` | `1` | Only detector slot 1 scans, or slot 1 most recently triggered |
+| `2` | `2` | Only detector slot 2 scans, or slot 2 most recently triggered |
+| `3` | `3` | Only detector slot 3 scans, or slot 3 most recently triggered |
 
 When a keyword detector fires, the arbiter updates `cd->active_slot` and automatically sends an
 ALSA control change notification (`SOF_IPC4_MODULE_NOTIFICATION` with `SOF_IPC4_ENUM_CONTROL_PARAM_ID`)
 to notify the kernel / ALSA mixer of the state transition. When the capture stream is stopped or reset,
-the arbiter transitions back to `Listening` (`0`) and sends a notification.
+the arbiter transitions back to `Auto` (`0`) and sends a notification.
 
 Query the control from userspace:
 
 ```bash
-amixer -c 0 cget name='wov_active_slot'
+amixer -c 0 cget name='DMIC Phrase Slot'
 ```
 
 #### `detect_test` — per-slot mute via `wov_mute_1NN` switch kcontrol
@@ -1160,7 +1164,7 @@ After driver load with the deployed single-KPB topology (`sof-tgl-dmic-4ch.tplg`
 | 15 | `wov_test_102` | boolean switch | Momentary trigger switch for slot 1 (auto-resets to `off`) |
 | 16 | `wov_mute_103` | boolean switch | Arm (`on`) / mute (`off`) detection for slot 2 (Core 1) |
 | 17 | `wov_test_103` | boolean switch | Momentary trigger switch for slot 2 (auto-resets to `off`) |
-| 18 | `wov_active_slot` | enumerated | Read-only arbiter active slot state (`Listening`, `Slot 1`, `Slot 2`, `Slot 3`) |
+| 18 | `DMIC Phrase Slot` | enumerated | Selects Auto or one detector; reports the winning detector after a trigger |
 
 > **Note:** numids are assigned in ALSA registration order. Run `amixer -c 0 controls`
 > to confirm actual numids on your sound card.
@@ -1172,17 +1176,19 @@ After driver load with the deployed single-KPB topology (`sof-tgl-dmic-4ch.tplg`
 | `kpb_cfg_100` (11) | Written automatically by the kernel from topology at pipeline open. Sets history depth (e.g. 6000 ms). |
 | `wov_mute_1NN` (12/14/16) | Write `on` to arm a slot for detection. Default is `off` (muted). |
 | `wov_test_1NN` (13/15/17) | Write `on` to immediately force a keyword trigger for testing. The control auto-resets to `off`. |
-| `wov_active_slot` (18) | Query with `amixer` to check currently active slot (`Listening` or `Slot 1`..`Slot 3`). |
+| `DMIC Phrase Slot` (18) | Query or select automatic detection / a specific detector (`Auto`, `1`, `2`, `3`). |
 
 ---
 
-### Reading Active Slot Status via `wov_active_slot` Enum Control
+### Selecting or Reading the `DMIC Phrase Slot` Enum Control
 
-The arbiter updates `wov_active_slot` to reflect the active triggered detector slot:
+`DMIC Phrase Slot` is a read/write enum. `Auto` enables all detector slots; values
+`1` through `3` pause the other slots and allow only the selected detector to scan.
+After a keyword trigger, the arbiter reports the winning slot through the same control.
 
 ```bash
-# Query current state (returns 'Listening', 'Slot 1', 'Slot 2', or 'Slot 3')
-amixer -c 0 cget name='wov_active_slot'
+# Query the current mode / triggered slot (returns 'Auto', '1', '2', or '3')
+amixer -c 0 cget name='DMIC Phrase Slot'
 ```
 
 ---
@@ -1208,7 +1214,7 @@ echo "rc=$?"
 ```
 
 Expected: `rc=0`. Slot 0 fires first (timing-dependent); the arbiter pauses slots 1 and 2
-via `NOTIFIER_ID_WOV_CTRL` and sets `wov_active_slot` to `Slot 1`.
+via `NOTIFIER_ID_WOV_CTRL` and sets `DMIC Phrase Slot` to `1`.
 
 #### Test manual trigger via `wov_test_1NN` kcontrol switch
 
@@ -1225,7 +1231,7 @@ amixer -c 0 cset numid=16 on
 amixer -c 0 cset numid=15 on   # wov_test_102 triggers detection and auto-resets to off
 
 # Check active slot in arbiter:
-amixer -c 0 cget name='wov_active_slot'  # Returns 'Item #1 Slot 2'
+amixer -c 0 cget name='DMIC Phrase Slot'  # Returns 'Item #2 2'
 
 wait $AREC
 echo "rc=$?"
@@ -1267,7 +1273,7 @@ kill $AREC
 
 #### Multi-Slot Automated Test Suite (`wov_multi_slot_test.py`)
 
-`tools/wov_capture/wov_multi_slot_test.py` runs an automated multi-cycle test verifying all 3 detector slots, momentary test trigger switches (`wov_test_101`, `wov_test_102`, `wov_test_103`), automatic switch reset to `off`, and `wov_active_slot` enum transitions (`Listening` -> `Slot N` -> `Listening`):
+`tools/wov_capture/wov_multi_slot_test.py` runs an automated multi-cycle test verifying all 3 detector slots, momentary test trigger switches (`wov_test_101`, `wov_test_102`, `wov_test_103`), automatic switch reset to `off`, and `DMIC Phrase Slot` enum transitions (`Auto` -> `N` -> `Auto`):
 
 ```bash
 # Run 10-cycle automated test suite across all 3 slots
@@ -1484,4 +1490,3 @@ All output is prefixed with a timestamp tag:
 [YYYY-MM-DD HH:MM:SS.mmm] [INFO ]   Channel 0: Min=-1245  Max=1432  DC=-12.4   RMS=432.1  (-37.6 dBFS) Peak=1432.0 (-27.2 dBFS)
 [YYYY-MM-DD HH:MM:SS.mmm] [INFO ]   Channel 1: Min=-1180  Max=1390  DC=-10.1   RMS=418.6  (-37.9 dBFS) Peak=1390.0 (-27.4 dBFS)
 ```
-
